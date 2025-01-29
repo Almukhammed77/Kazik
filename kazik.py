@@ -140,9 +140,15 @@ async def poker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.reply_text(f"🤝 Ничья! Баланс не изменился.\n💰 Баланс: {user_balances[user_id]}$")
 
 
+
 async def russian_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
+
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
+
+    balance = user_balances[user_id]
 
     if balance < 200:
         await update.message.reply_text("❌ У вас недостаточно денег для русской рулетки!")
@@ -159,10 +165,8 @@ async def russian_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         winnings = 300
         user_balances[user_id] += winnings
-        await update.message.reply_text(f"😅 Щелк! Вам повезло, барабан пуст! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
-
-
-
+        await update.message.reply_text(
+            f"😅 Щелк! Вам повезло, барабан пуст! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
 async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     balance = user_balances.get(user_id, START_BALANCE)
@@ -184,8 +188,6 @@ async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     except ValueError:
         await update.message.reply_text("❌ Введите корректное число для пополнения! Пример: `/deposit 500`")
-
-
 def main():
     TOKEN = "7771538325:AAFS1STLG3C47o7-Nk6_htSV9e51A9A_1q0"
     app = ApplicationBuilder().token(TOKEN).build()
@@ -202,6 +204,7 @@ def main():
     app.add_handler(CallbackQueryHandler(poker, pattern="^poker$"))
 
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
