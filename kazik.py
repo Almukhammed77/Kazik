@@ -1,8 +1,9 @@
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 import random
 
 user_balances = {}
+user_bets = {}
 
 START_BALANCE = 1000
 
@@ -16,8 +17,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"💰 Ваш баланс: {user_balances[user_id]}$\n"
         "Доступные команды:\n"
         "/balance - Проверить баланс\n"
-        "/casino - Играть в рулетку, блэкджек, кости и покер\n"
-        "/russian_roulette - Играть в русскую рулетку"
+        "/casino - Играть в казино\n"
+        "/russian_roulette - Играть в русскую рулетку\n"
+        "/deposit - Пополнить баланс"
     )
 
 
@@ -38,121 +40,141 @@ async def casino(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Выберите игру:", reply_markup=reply_markup)
 
 
-async def roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def request_bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
+    game = query.data
+    context.user_data["game"] = game
+    await query.message.reply_text("💵 Введите сумму ставки:")
 
-    if balance < 100:
-        await query.message.reply_text("❌ У вас недостаточно денег для игры в рулетку!")
+
+async def set_bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    game = context.user_data.get("game")
+
+    if not game:
+        await update.message.reply_text("❌ Сначала выберите игру с помощью /casino")
         return
 
-    bet = random.randint(0, 36)
-    user_bet = random.randint(0, 36)
+    try:
+        bet = int(update.message.text)
+        if bet <= 0:
+            await update.message.reply_text("❌ Ставка должна быть больше 0!")
+            return
 
-    if bet == user_bet:
-        winnings = 500
+        balance = user_balances.get(user_id, START_BALANCE)
+        if bet > balance:
+            await update.message.reply_text("❌ Недостаточно средств!")
+            return
+
+        user_bets[user_id] = bet
+        user_balances[user_id] -= bet
+
+        if game == "russian_roulette":
+            await play_russian_roulette(update, context)
+        if game == "roulette":
+            await roulette(update, context)
+        elif game == "blackjack":
+            await blackjack(update, context)
+        elif game == "dice":
+            await dice(update, context)
+        elif game == "poker":
+            await poker(update, context)
+
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму ставки!")
+
+
+async def roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    bet = user_bets.get(user_id, 100)
+    winning_number = random.randint(0, 36)
+    user_number = random.randint(0, 36)
+
+    if winning_number == user_number:
+        winnings = bet * 5
         user_balances[user_id] += winnings
-        await query.message.reply_text(f"🎉 Выпало {bet}, вы угадали! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
+        await update.message.reply_text(
+            f"🎉 Выпало {winning_number}, вы угадали! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
     else:
-        user_balances[user_id] -= 100
-        await query.message.reply_text(f"😢 Выпало {bet}, вы поставили {user_bet}. -100$\n💰 Баланс: {user_balances[user_id]}$")
+        await update.message.reply_text(
+            f"😢 Выпало {winning_number}, вы поставили {user_number}. -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
 
 
 async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user_id = query.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
-
-    if balance < 100:
-        await query.message.reply_text("❌ У вас недостаточно денег для игры в блэкджек!")
-        return
-
+    user_id = update.message.from_user.id
+    bet = user_bets.get(user_id, 100)
     user_cards = [random.randint(1, 11) for _ in range(2)]
     dealer_cards = [random.randint(1, 11) for _ in range(2)]
     user_total = sum(user_cards)
     dealer_total = sum(dealer_cards)
 
-    await query.message.reply_text(
+    await update.message.reply_text(
         f"🃏 Ваши карты: {user_cards} (сумма: {user_total})\n"
         f"🃏 Карты дилера: {dealer_cards} (сумма: {dealer_total})"
     )
 
     if user_total > 21:
-        user_balances[user_id] -= 100
-        await query.message.reply_text(f"😢 Перебор! -100$\n💰 Баланс: {user_balances[user_id]}$")
+        await update.message.reply_text(f"😢 Перебор! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
     elif dealer_total > 21 or user_total > dealer_total:
-        user_balances[user_id] += 200
-        await query.message.reply_text(f"🎉 Вы выиграли! +200$\n💰 Баланс: {user_balances[user_id]}$")
+        winnings = bet * 2
+        user_balances[user_id] += winnings
+        await update.message.reply_text(f"🎉 Вы выиграли! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
     elif user_total == dealer_total:
-        await query.message.reply_text(f"🤝 Ничья! Баланс не изменился.\n💰 Баланс: {user_balances[user_id]}$")
+        user_balances[user_id] += bet
+        await update.message.reply_text(f"🤝 Ничья! Ставка возвращена.\n💰 Баланс: {user_balances[user_id]}$")
     else:
-        user_balances[user_id] -= 100
-        await query.message.reply_text(f"😢 Вы проиграли! -100$\n💰 Баланс: {user_balances[user_id]}$")
-
-
-async def dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user_id = query.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
-
-    if balance < 50:
-        await query.message.reply_text("❌ У вас недостаточно денег для игры в кости!")
-        return
-
-    player_throw = random.randint(1, 6)
-    bot_throw = random.randint(1, 6)
-
-    await query.message.reply_text(f"🎲 Вы выбросили {player_throw}, бот выбросил {bot_throw}")
-
-    if player_throw > bot_throw:
-        user_balances[user_id] += 100
-        await query.message.reply_text(f"🎉 Вы победили! +100$\n💰 Баланс: {user_balances[user_id]}$")
-    elif player_throw < bot_throw:
-        user_balances[user_id] -= 50
-        await query.message.reply_text(f"😢 Вы проиграли! -50$\n💰 Баланс: {user_balances[user_id]}$")
-    else:
-        await query.message.reply_text(f"🤝 Ничья! Баланс не изменился.\n💰 Баланс: {user_balances[user_id]}$")
-
+        await update.message.reply_text(f"😢 Вы проиграли! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
 
 async def poker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    user_id = query.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
-
-    if balance < 200:
-        await query.message.reply_text("❌ У вас недостаточно денег для игры в покер!")
-        return
+    user_id = update.message.from_user.id
+    bet = user_bets.get(user_id, 100)
 
     hands = ["Пара", "Две пары", "Тройка", "Флеш", "Стрит", "Фулл-хаус", "Каре", "Стрит-флеш", "Роял-флеш"]
     player_hand = random.choice(hands)
     bot_hand = random.choice(hands)
 
-    await query.message.reply_text(f"🃏 Ваша комбинация: {player_hand}\n🤖 Комбинация бота: {bot_hand}")
+    await update.message.reply_text(f"🃏 Ваша комбинация: {player_hand}\n🤖 Комбинация бота: {bot_hand}")
 
     if hands.index(player_hand) > hands.index(bot_hand):
-        user_balances[user_id] += 500
-        await query.message.reply_text(f"🎉 Вы выиграли! +500$\n💰 Баланс: {user_balances[user_id]}$")
+        winnings = bet * 2
+        user_balances[user_id] += winnings
+        await update.message.reply_text(f"🎉 Вы выиграли! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
     elif hands.index(player_hand) < hands.index(bot_hand):
-        user_balances[user_id] -= 200
-        await query.message.reply_text(f"😢 Вы проиграли! -200$\n💰 Баланс: {user_balances[user_id]}$")
+        await update.message.reply_text(f"😢 Вы проиграли! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
     else:
-        await query.message.reply_text(f"🤝 Ничья! Баланс не изменился.\n💰 Баланс: {user_balances[user_id]}$")
+        user_balances[user_id] += bet
+        await update.message.reply_text(f"🤝 Ничья! Ставка возвращена.\n💰 Баланс: {user_balances[user_id]}$")
 
 
+async def dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    bet = user_bets.get(user_id, 100)
+
+    player_throw = random.randint(1, 6)
+    bot_throw = random.randint(1, 6)
+
+    await update.message.reply_text(f"🎲 Вы выбросили {player_throw}, бот выбросил {bot_throw}")
+
+    if player_throw > bot_throw:
+        winnings = bet * 2
+        user_balances[user_id] += winnings
+        await update.message.reply_text(f"🎉 Вы победили! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
+    elif player_throw < bot_throw:
+        await update.message.reply_text(f"😢 Вы проиграли! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
+    else:
+        user_balances[user_id] += bet
+        await update.message.reply_text(f"🤝 Ничья! Ставка возвращена.\n💰 Баланс: {user_balances[user_id]}$")
 
 async def russian_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
+    context.user_data["game"] = "russian_roulette"
+    await update.message.reply_text("🔫 Введите сумму ставки для игры в русскую рулетку:")
 
 
-    if user_id not in user_balances:
-        user_balances[user_id] = START_BALANCE
-
-    balance = user_balances[user_id]
-
-    if balance < 200:
-        await update.message.reply_text("❌ У вас недостаточно денег для русской рулетки!")
-        return
+async def play_russian_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    bet = user_bets.get(user_id, 100)
 
     bullet_position = random.randint(1, 6)
     trigger_pull = random.randint(1, 6)
@@ -160,20 +182,20 @@ async def russian_roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text("🔫 Вы подносите револьвер к виску и нажимаете на курок...")
 
     if bullet_position == trigger_pull:
-        user_balances[user_id] = 0
-        await update.message.reply_text("💥 Бах! Вы проиграли всё... 😵\n💰 Баланс: 0$")
+        user_balances[user_id] -= bet
+        await update.message.reply_text(f"💥 Бах! Вы проиграли {bet}$...\n💰 Баланс: {user_balances[user_id]}$")
     else:
-        winnings = 300
+        winnings = bet * 3
         user_balances[user_id] += winnings
         await update.message.reply_text(
-            f"😅 Щелк! Вам повезло, барабан пуст! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
+            f"😅 Щелк! Вам повезло, барабан пуст! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$"
+        )
+
 async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
-
 
     if not context.args:
-        await update.message.reply_text("💰 Используйте команду так: `/deposit 500` (сумма пополнения)")
+        await update.message.reply_text("💰 Используйте команду так: `/deposit 500`")
         return
 
     try:
@@ -185,9 +207,25 @@ async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_balances[user_id] += amount
         await update.message.reply_text(
             f"✅ Вы пополнили баланс на {amount}$\n💰 Новый баланс: {user_balances[user_id]}$")
-
     except ValueError:
-        await update.message.reply_text("❌ Введите корректное число для пополнения! Пример: `/deposit 500`")
+        await update.message.reply_text("❌ Введите корректное число!")
+
+
+import asyncio
+from telegram import BotCommand
+
+
+async def set_bot_commands(app):
+    commands = [
+        BotCommand("start", "📜 Open menu"),
+        BotCommand("balance", "💰 Show your balance"),
+        BotCommand("casino", "🎰 Play casino games"),
+        BotCommand("deposit", "💵 Add money to your balance"),
+        BotCommand("russian_roulette", "🔫 Play Russian roulette")
+    ]
+    await app.bot.set_my_commands(commands)
+
+
 def main():
     TOKEN = "7771538325:AAFS1STLG3C47o7-Nk6_htSV9e51A9A_1q0"
     app = ApplicationBuilder().token(TOKEN).build()
@@ -195,13 +233,11 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("casino", casino))
-    app.add_handler(CommandHandler("russian_roulette", russian_roulette))
     app.add_handler(CommandHandler("deposit", deposit))
+    app.add_handler(CommandHandler("russian_roulette", russian_roulette))
 
-    app.add_handler(CallbackQueryHandler(roulette, pattern="^roulette$"))
-    app.add_handler(CallbackQueryHandler(blackjack, pattern="^blackjack$"))
-    app.add_handler(CallbackQueryHandler(dice, pattern="^dice$"))
-    app.add_handler(CallbackQueryHandler(poker, pattern="^poker$"))
+    app.add_handler(CallbackQueryHandler(request_bet, pattern="^(roulette|blackjack|dice|poker)$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_bet))
 
     app.run_polling()
 
