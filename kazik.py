@@ -4,6 +4,7 @@ import random
 
 user_balances = {}
 user_bets = {}
+user_stats = {}
 
 START_BALANCE = 1000
 
@@ -19,6 +20,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/balance - Проверить баланс\n"
         "/casino - Играть в казино\n"
         "/russian_roulette - Играть в русскую рулетку\n"
+        "/hack - Взлом казино\n"
+        "/profile - Профиль игрока\n"
         "/deposit - Пополнить баланс"
     )
 
@@ -27,6 +30,64 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     balance = user_balances.get(user_id, START_BALANCE)
     await update.message.reply_text(f"💰 Ваш текущий баланс: {balance}$")
+
+
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    balance = user_balances.get(user_id, START_BALANCE)
+
+    if user_id not in user_stats:
+        user_stats[user_id] = {"wins": 0, "losses": 0}
+
+    wins = user_stats[user_id]["wins"]
+    losses = user_stats[user_id]["losses"]
+    vip_status = "VIP-игрок 🏆" if balance > 10000 else "Обычный игрок"
+
+    await update.message.reply_text(
+        f"🆔 *Ваш профиль*\n"
+        f"💰 *Баланс:* {balance}$\n"
+        f"🎰 *Побед:* {wins} | ❌ *Поражений:* {losses}\n"
+        f"🎖 *Статус:* {vip_status}",
+        parse_mode="Markdown"
+    )
+
+async def hack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+    balance = user_balances.get(user_id, START_BALANCE)
+
+    if len(context.args) == 0:
+        await update.message.reply_text("💻 Использование: `/hack <ставка>`")
+        return
+
+    try:
+        bet = int(context.args[0])
+        if bet <= 0:
+            await update.message.reply_text("❌ Ставка должна быть больше 0!")
+            return
+
+        if bet > balance:
+            await update.message.reply_text("❌ У вас недостаточно средств!")
+            return
+
+        await update.message.reply_text("👨‍💻 Взлом казино начался...")
+
+        from asyncio import sleep
+        await sleep(2)
+
+        success = random.randint(1, 100) <= 10
+        if success:
+            winnings = bet * 5
+            user_balances[user_id] += winnings
+            user_stats[user_id]["wins"] += 1
+            await update.message.reply_text(f"✅ Взлом успешен! Вы получили {winnings}$!\n💰 Баланс: {user_balances[user_id]}$")
+        else:
+            loss = bet * 2
+            user_balances[user_id] -= loss
+            user_stats[user_id]["losses"] += 1
+            await update.message.reply_text(f"❌ Взлом не удался! -{loss}$\n💰 Баланс: {user_balances[user_id]}$")
+
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму ставки!")
 
 
 async def casino(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -55,6 +116,9 @@ async def set_bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not game:
         await update.message.reply_text("❌ Сначала выберите игру с помощью /casino")
         return
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
 
     try:
         bet = int(update.message.text)
@@ -221,7 +285,9 @@ async def set_bot_commands(app):
         BotCommand("balance", "💰 Show your balance"),
         BotCommand("casino", "🎰 Play casino games"),
         BotCommand("deposit", "💵 Add money to your balance"),
-        BotCommand("russian_roulette", "🔫 Play Russian roulette")
+        BotCommand("russian_roulette", "🔫 Play Russian roulette"),
+        BotCommand("profile", "🆔 View your profile"),
+        BotCommand("hack", "💻 Try to hack the casino")
     ]
     await app.bot.set_my_commands(commands)
 
@@ -235,6 +301,8 @@ def main():
     app.add_handler(CommandHandler("casino", casino))
     app.add_handler(CommandHandler("deposit", deposit))
     app.add_handler(CommandHandler("russian_roulette", russian_roulette))
+    app.add_handler(CommandHandler("profile", profile))
+    app.add_handler(CommandHandler("hack", hack))
 
     app.add_handler(CallbackQueryHandler(request_bet, pattern="^(roulette|blackjack|dice|poker)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_bet))
