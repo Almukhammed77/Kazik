@@ -5,6 +5,7 @@ import random
 user_balances = {}
 user_bets = {}
 user_stats = {}
+user_loans = {}
 
 START_BALANCE = 1000
 
@@ -22,6 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/russian_roulette - Играть в русскую рулетку\n"
         "/hack - Взлом казино\n"
         "/profile - Профиль игрока\n"
+        "/bet - Сделать ставку на событие\n"
         "/deposit - Пополнить баланс"
     )
 
@@ -53,7 +55,11 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def hack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
-    balance = user_balances.get(user_id, START_BALANCE)
+    if user_id not in user_stats:
+        user_stats[user_id] = {"wins": 0, "losses": 0}
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
 
     if len(context.args) == 0:
         await update.message.reply_text("💻 Использование: `/hack <ставка>`")
@@ -65,7 +71,7 @@ async def hack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("❌ Ставка должна быть больше 0!")
             return
 
-        if bet > balance:
+        if bet > user_balances[user_id]:
             await update.message.reply_text("❌ У вас недостаточно средств!")
             return
 
@@ -74,7 +80,7 @@ async def hack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from asyncio import sleep
         await sleep(2)
 
-        success = random.randint(1, 100) <= 10
+        success = random.randint(1, 100) <= 10  # 10% шанс на успех
         if success:
             winnings = bet * 5
             user_balances[user_id] += winnings
@@ -89,6 +95,55 @@ async def hack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except ValueError:
         await update.message.reply_text("❌ Введите корректную сумму ставки!")
 
+async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+    if len(context.args) < 2:
+        await update.message.reply_text("❌ Используйте формат: `/bet [событие] [ставка]`")
+        return
+
+    event = " ".join(context.args[:-1])
+    try:
+        amount = int(context.args[-1])
+        if amount <= 0:
+            await update.message.reply_text("❌ Ставка должна быть больше 0!")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму ставки!")
+        return
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
+
+    if user_id not in user_stats:
+        user_stats[user_id] = {"wins": 0, "losses": 0}  # ✅ Добавляем игрока в stats
+
+    if amount > user_balances[user_id]:
+        await update.message.reply_text("❌ У вас недостаточно средств!")
+        return
+
+    user_balances[user_id] -= amount
+    await update.message.reply_text(f"🎯 Вы сделали ставку `{amount}$` на: {event}\n⌛ Ожидаем результат...")
+
+    await asyncio.sleep(5)
+
+    outcome = random.choice(["win", "lose"])
+    if outcome == "win":
+        winnings = amount * 2
+        user_balances[user_id] += winnings
+        user_stats[user_id]["wins"] += 1
+        await update.message.reply_text(
+            f"🏆 Результат: {event} случилось!\n"
+            f"🎉 Вы выиграли {winnings}$!\n"
+            f"💰 Баланс: {user_balances[user_id]}$"
+        )
+    else:
+        user_stats[user_id]["losses"] += 1
+        await update.message.reply_text(
+            f"❌ Результат: {event} **не** случилось...\n"
+            f"💸 Вы потеряли {amount}$\n"
+            f"💰 Баланс: {user_balances[user_id]}$"
+        )
 
 async def casino(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
@@ -112,6 +167,9 @@ async def request_bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def set_bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     game = context.user_data.get("game")
+
+    if user_id not in user_stats:
+        user_stats[user_id] = {"wins": 0, "losses": 0}
 
     if not game:
         await update.message.reply_text("❌ Сначала выберите игру с помощью /casino")
@@ -275,6 +333,47 @@ async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Введите корректное число!")
 
 
+async def loan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+    if len(context.args) == 0:
+        await update.message.reply_text("🏦 Используйте: `/loan <сумма>`")
+        return
+
+    try:
+        amount = int(context.args[0])
+        if amount <= 0:
+            await update.message.reply_text("❌ Введите положительное число!")
+            return
+
+        if user_id in user_loans:
+            await update.message.reply_text("❌ У вас уже есть активный кредит!")
+            return
+
+        user_loans[user_id] = amount * 1.5
+        user_balances[user_id] += amount
+
+        await update.message.reply_text(f"🏦 Вы взяли кредит {amount}$! Вам нужно вернуть {user_loans[user_id]}$.")
+
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректное число!")
+
+async def repay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+    if user_id not in user_loans:
+        await update.message.reply_text("✅ У вас нет активных кредитов!")
+        return
+
+    if user_balances[user_id] < user_loans[user_id]:
+        await update.message.reply_text("❌ У вас недостаточно денег для погашения кредита!")
+        return
+
+    user_balances[user_id] -= user_loans[user_id]
+    del user_loans[user_id]
+
+    await update.message.reply_text("✅ Вы успешно погасили свой кредит! Теперь вы свободны от долгов.")
+
 import asyncio
 from telegram import BotCommand
 
@@ -287,7 +386,10 @@ async def set_bot_commands(app):
         BotCommand("deposit", "💵 Add money to your balance"),
         BotCommand("russian_roulette", "🔫 Play Russian roulette"),
         BotCommand("profile", "🆔 View your profile"),
-        BotCommand("hack", "💻 Try to hack the casino")
+        BotCommand("hack", "💻 Try to hack the casino"),
+        BotCommand("bet", "💵 Place a bet on a game"),
+        BotCommand("loan", "🏦 Take a loan"),
+        BotCommand("repay", "💵 Repay your loan")
     ]
     await app.bot.set_my_commands(commands)
 
@@ -303,6 +405,9 @@ def main():
     app.add_handler(CommandHandler("russian_roulette", russian_roulette))
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("hack", hack))
+    app.add_handler(CommandHandler("bet", bet))
+    app.add_handler(CommandHandler("loan", loan))
+    app.add_handler(CommandHandler("repay", repay))
 
     app.add_handler(CallbackQueryHandler(request_bet, pattern="^(roulette|blackjack|dice|poker)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_bet))
