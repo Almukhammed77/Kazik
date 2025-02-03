@@ -24,7 +24,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/hack - Взлом казино\n"
         "/profile - Профиль игрока\n"
         "/bet - Сделать ставку на событие\n"
-        "/deposit - Пополнить баланс"
+        "/deposit - Пополнить баланс\n"
+        "/loan - Взять кредит\n"
+        "/repay - Погасить кредит\n"
+        "/crime - Совершить преступление"
     )
 
 
@@ -94,6 +97,51 @@ async def hack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     except ValueError:
         await update.message.reply_text("❌ Введите корректную сумму ставки!")
+
+CRIMES = [
+    ("bank", "🏦 Ограбление банка", 5000, 30),
+    ("car", "🚗 Кража машины", 3000, 40),
+    ("money", "💵 Подделка денег", 2000, 50),
+    ("robbery", "🔪 Грабеж в переулке", 1000, 60),
+    ("casino", "🎰 Ограбление казино", 7000, 20)
+]
+async def crime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = [
+        [InlineKeyboardButton(crime[1], callback_data=crime[0])] for crime in CRIMES
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🚔 Выберите преступление:", reply_markup=reply_markup)
+
+async def commit_crime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    crime_id = query.data
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
+    if user_id not in user_stats:
+        user_stats[user_id] = {"wins": 0, "losses": 0}
+
+    selected_crime = next((crime for crime in CRIMES if crime[0] == crime_id), None)
+    if not selected_crime:
+        await query.message.reply_text("❌ Ошибка! Преступление не найдено.")
+        return
+
+    crime_name, reward, success_chance = selected_crime[1:]
+
+    await query.message.edit_text(f"🚔 Попытка {crime_name}...")
+
+    await asyncio.sleep(3)
+
+    if random.randint(1, 100) <= success_chance:
+        user_balances[user_id] += reward
+        user_stats[user_id]["wins"] += 1
+        await query.message.reply_text(f"✅ Успешно! Вы получили {reward}$!\n💰 Баланс: {user_balances[user_id]}$")
+    else:
+        loss = reward // 2
+        user_balances[user_id] -= loss
+        user_stats[user_id]["losses"] += 1
+        await query.message.reply_text(f"❌ Вас поймали! Штраф: {loss}$\n💰 Баланс: {user_balances[user_id]}$")
 
 async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
@@ -389,7 +437,8 @@ async def set_bot_commands(app):
         BotCommand("hack", "💻 Try to hack the casino"),
         BotCommand("bet", "💵 Place a bet on a game"),
         BotCommand("loan", "🏦 Take a loan"),
-        BotCommand("repay", "💵 Repay your loan")
+        BotCommand("repay", "💵 Repay your loan"),
+        BotCommand("crime", "🚔 Commit crimes")
     ]
     await app.bot.set_my_commands(commands)
 
@@ -408,6 +457,8 @@ def main():
     app.add_handler(CommandHandler("bet", bet))
     app.add_handler(CommandHandler("loan", loan))
     app.add_handler(CommandHandler("repay", repay))
+    app.add_handler(CommandHandler("crime", crime))
+    app.add_handler(CallbackQueryHandler(commit_crime, pattern="^(bank|car|money|robbery|casino)$"))
 
     app.add_handler(CallbackQueryHandler(request_bet, pattern="^(roulette|blackjack|dice|poker)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_bet))
