@@ -7,6 +7,8 @@ user_bets = {}
 user_stats = {}
 user_loans = {}
 players = {}
+active_crash_games = {}
+active_duels = {}
 
 START_BALANCE = 1000
 
@@ -50,22 +52,35 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     await update.message.reply_text(leaderboard_text)
 
-
-duels = {}
+active_duels = {}
 
 async def duel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Создание дуэли"""
     user_id = update.message.from_user.id
+    args = context.args
 
-    if len(context.args) < 2:
-        await update.message.reply_text("⚔ Использование: `/duel @username <ставка>`")
+    if len(args) < 2:
+        await update.message.reply_text("❌ Используйте команду так: `/duel @username <ставка>`")
         return
 
-    opponent_username = context.args[0].replace("@", "")
-    bet = int(context.args[1])
+    try:
+        opponent_username = args[0].strip("@")
+        bet = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму ставки!")
+        return
+
+    if bet <= 0:
+        await update.message.reply_text("❌ Ставка должна быть больше 0!")
+        return
+
+    if user_id not in user_balances or user_balances[user_id] < bet:
+        await update.message.reply_text("❌ У вас недостаточно денег для дуэли!")
+        return
+
 
     opponent_id = next((uid for uid, uname in players.items() if uname == opponent_username), None)
-
-    if not opponent_id:
+    if opponent_id is None:
         await update.message.reply_text("❌ Игрок не найден!")
         return
 
@@ -73,18 +88,138 @@ async def duel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("❌ Нельзя вызвать себя на дуэль!")
         return
 
-    if bet <= 0 or bet > user_balances[user_id] or bet > user_balances[opponent_id]:
-        await update.message.reply_text("❌ Недостаточно денег для дуэли!")
+    if opponent_id in active_duels:
+        await update.message.reply_text("❌ Этот игрок уже участвует в дуэли!")
         return
+
+    active_duels[opponent_id] = (user_id, bet)
+    await update.message.reply_text(f"⚔️ Вы вызвали @{opponent_username} на дуэль на {bet}$! Ждем его ответа...")
+    await context.bot.send_message(opponent_id, f"⚔️ @{update.message.from_user.username} вызвал вас на дуэль на {bet}$! Введите /accept для принятия.")
+
+async def accept(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Принятие дуэли"""
+    user_id = update.message.from_user.id
+
+    if user_id not in active_duels:
+        await update.message.reply_text("❌ У вас нет активных вызовов на дуэль!")
+        return
+
+    opponent_id, bet = active_duels[user_id]
+
+    if user_id not in user_balances or user_balances[user_id] < bet:
+        await update.message.reply_text("❌ У вас недостаточно денег для принятия дуэли!")
+        return
+
+
+    user_balances[user_id] -= bet
+    user_balances[opponent_id] -= bet
+
+    await update.message.reply_text("🎲 Дуэль началась! Ожидаем результат...")
+    await context.bot.send_message(opponent_id, "🎲 Дуэль началась! Ожидаем результат...")
+
+    await asyncio.sleep(3)
+
 
     winner = random.choice([user_id, opponent_id])
     loser = opponent_id if winner == user_id else user_id
 
-    user_balances[winner] += bet
-    user_balances[loser] -= bet
+    winnings = int(bet * 2 * 0.95)
+    user_balances[winner] += winnings
 
-    await update.message.reply_text(f"⚔ Дуэль окончена! Победитель: {players[winner]} +{bet}$")
+    await context.bot.send_message(winner, f"🎉 Вы победили в дуэли и получили {winnings}$! 💰")
+    await context.bot.send_message(loser, "💀 Вы проиграли дуэль...")
 
+    del active_duels[user_id]
+
+
+async def crash(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
+
+    if len(context.args) == 0:
+        await update.message.reply_text("📈 Используйте: `/crash <ставка>`")
+        return
+
+    try:
+        bet = int(context.args[0])
+        if bet <= 0:
+            await update.message.reply_text("❌ Ставка должна быть больше 0!")
+            return
+        if bet > user_balances[user_id]:
+            await update.message.reply_text("❌ У вас недостаточно средств!")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму!")
+        return
+
+    user_balances[user_id] -= bet
+    await update.message.reply_text(
+        f"📈 Вы поставили {bet}$, коэффициент растёт! Напишите `/cashout`, чтобы зафиксировать выигрыш.")
+
+    active_crash_games[user_id] = {"bet": bet, "multiplier": 1.0, "active": True}
+
+    while active_crash_games[user_id]["active"]:
+        await asyncio.sleep(1)
+        active_crash_games[user_id]["multiplier"] += round(random.uniform(0.1, 0.5), 2)
+
+        if random.randint(1, 100) < 10:
+            await update.message.reply_text(
+                f"💥 Крэш! Коэффициент: {active_crash_games[user_id]['multiplier']:.2f}x. Вы проиграли {bet}$!")
+            del active_crash_games[user_id]
+            return
+
+        await update.message.reply_text(f"📈 Текущий коэффициент: {active_crash_games[user_id]['multiplier']:.2f}x")
+
+async def cashout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+    if user_id not in active_crash_games or not active_crash_games[user_id]["active"]:
+        await update.message.reply_text("❌ У вас нет активных игр в Crash!")
+        return
+
+    winnings = int(active_crash_games[user_id]["bet"] * active_crash_games[user_id]["multiplier"])
+    user_balances[user_id] += winnings
+    await update.message.reply_text(
+        f"🎉 Вы зафиксировали выигрыш на {active_crash_games[user_id]['multiplier']:.2f}x и получили {winnings}$!")
+
+    del active_crash_games[user_id]
+
+
+async def rob(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.message.from_user.id
+
+    if len(context.args) == 0:
+        await update.message.reply_text("🏴‍☠️ Используйте: `/rob @username`")
+        return
+
+    target_username = context.args[0].strip("@")
+    target_id = next((uid for uid, uname in players.items() if uname == target_username), None)
+
+    if target_id is None or target_id not in user_balances:
+        await update.message.reply_text("❌ Игрок не найден!")
+        return
+
+    if target_id == user_id:
+        await update.message.reply_text("❌ Нельзя ограбить самого себя!")
+        return
+
+    if user_balances[target_id] < 100:
+        await update.message.reply_text("❌ У игрока слишком мало денег для ограбления!")
+        return
+
+    if random.randint(1, 100) <= 50:
+        stolen_amount = random.randint(int(user_balances[target_id] * 0.2), int(user_balances[target_id] * 0.5))
+        user_balances[user_id] += stolen_amount
+        user_balances[target_id] -= stolen_amount
+
+        await update.message.reply_text(f"🏴‍☠️ Вы успешно ограбили @{target_username} и украли {stolen_amount}$!")
+        await context.bot.send_message(target_id, f"🚔 Вас ограбили! Вы потеряли {stolen_amount}$!")
+    else:
+        fine = random.randint(100, 500)
+        user_balances[user_id] -= fine
+        await update.message.reply_text(f"🚔 Вас поймали! Штраф {fine}$.")
 
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -494,7 +629,10 @@ async def set_bot_commands(app):
         BotCommand("bet", "💵 Place a bet on a game"),
         BotCommand("loan", "🏦 Take a loan"),
         BotCommand("repay", "💵 Repay your loan"),
-        BotCommand("crime", "🚔 Commit crimes")
+        BotCommand("crime", "🚔 Commit crimes"),
+        BotCommand("crash", "📈 Play Crash"),
+        BotCommand("cashout", "💸 Withdraw from Crash"),
+        BotCommand("rob", "🏴‍☠️ Rob another player")
     ]
     await app.bot.set_my_commands(commands)
 
@@ -518,6 +656,10 @@ def main():
     app.add_handler(CommandHandler("balance", leaderboard))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("duel", duel))
+    app.add_handler(CommandHandler("accept", accept))
+    app.add_handler(CommandHandler("crash", crash))
+    app.add_handler(CommandHandler("cashout", cashout))
+    app.add_handler(CommandHandler("rob", rob))
 
     app.add_handler(CallbackQueryHandler(request_bet, pattern="^(roulette|blackjack|dice|poker)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_bet))
