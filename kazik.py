@@ -26,6 +26,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/balance - Проверить баланс\n"
         "/casino - Играть в казино\n"
         "/russian_roulette - Играть в русскую рулетку\n"
+        "/blackjack - Играть в блэкджэк\n"
+        "/poker - Играть в покер\n"
         "/hack - Взлом казино\n"
         "/profile - Профиль игрока\n"
         "/bet - Сделать ставку на событие\n"
@@ -35,6 +37,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/crime - Совершить преступление\n"
         "/leaderboard - Таблица лидеров\n"
         "/duel - Дуэль\n"
+        "/crash - Функция\n"
+        "/crashout - Выводить деньги с функции\n"
+        "/rob - Ограбление\n"
     )
 
 
@@ -387,9 +392,7 @@ async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def casino(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
         [InlineKeyboardButton("🎲 Рулетка", callback_data="roulette")],
-        [InlineKeyboardButton("🃏 Блэкджек", callback_data="blackjack")],
-        [InlineKeyboardButton("🎲 Кости", callback_data="dice")],
-        [InlineKeyboardButton("🃏 Покер", callback_data="poker")]
+        [InlineKeyboardButton("🎲 Кости", callback_data="dice")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("Выберите игру:", reply_markup=reply_markup)
@@ -462,51 +465,231 @@ async def roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"😢 Выпало {winning_number}, вы поставили {user_number}. -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
 
 
-async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.message.from_user.id
-    bet = user_bets.get(user_id, 100)
-    user_cards = [random.randint(1, 11) for _ in range(2)]
-    dealer_cards = [random.randint(1, 11) for _ in range(2)]
-    user_total = sum(user_cards)
-    dealer_total = sum(dealer_cards)
+CARD_VALUES = {
+    "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10,
+    "J": 10, "Q": 10, "K": 10, "A": 11
+}
 
+active_blackjack_games = {}
+
+def deal_card():
+    return random.choice(list(CARD_VALUES.keys()))
+
+
+def calculate_score(cards):
+    score = sum(CARD_VALUES[card] for card in cards)
+    aces = cards.count("A")
+
+
+    while score > 21 and aces:
+        score -= 10
+        aces -= 1
+
+    return score
+
+
+async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
+
+    if len(context.args) == 0:
+        await update.message.reply_text("🎰 Используйте: `/blackjack <ставка>`")
+        return
+
+    try:
+        bet = int(context.args[0])
+        if bet <= 0:
+            await update.message.reply_text("❌ Ставка должна быть больше 0!")
+            return
+        if bet > user_balances[user_id]:
+            await update.message.reply_text("❌ У вас недостаточно средств!")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму!")
+        return
+
+
+    player_cards = [deal_card(), deal_card()]
+    dealer_cards = [deal_card(), deal_card()]
+
+    player_score = calculate_score(player_cards)
+    dealer_score = calculate_score(dealer_cards)
+
+    active_blackjack_games[user_id] = {
+        "bet": bet,
+        "player_cards": player_cards,
+        "dealer_cards": dealer_cards,
+        "player_score": player_score,
+        "dealer_score": dealer_score,
+        "active": True
+    }
+
+    user_balances[user_id] -= bet  # Вычитаем ставку
     await update.message.reply_text(
-        f"🃏 Ваши карты: {user_cards} (сумма: {user_total})\n"
-        f"🃏 Карты дилера: {dealer_cards} (сумма: {dealer_total})"
+        f"🃏 Вы получили: {', '.join(player_cards)} ({player_score} очков)\n"
+        f"🤵 Дилер показывает: {dealer_cards[0]}, ?\n\n"
+        "✋ Напишите `/hit`, чтобы взять карту, или `/stand`, чтобы закончить ход."
     )
 
-    if user_total > 21:
-        await update.message.reply_text(f"😢 Перебор! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
-    elif dealer_total > 21 or user_total > dealer_total:
-        winnings = bet * 2
-        user_balances[user_id] += winnings
-        await update.message.reply_text(f"🎉 Вы выиграли! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
-    elif user_total == dealer_total:
-        user_balances[user_id] += bet
-        await update.message.reply_text(f"🤝 Ничья! Ставка возвращена.\n💰 Баланс: {user_balances[user_id]}$")
-    else:
-        await update.message.reply_text(f"😢 Вы проиграли! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
-
-async def poker(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def hit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    bet = user_bets.get(user_id, 100)
 
-    hands = ["Пара", "Две пары", "Тройка", "Флеш", "Стрит", "Фулл-хаус", "Каре", "Стрит-флеш", "Роял-флеш"]
-    player_hand = random.choice(hands)
-    bot_hand = random.choice(hands)
+    if user_id not in active_blackjack_games:
+        await update.message.reply_text("❌ У вас нет активной игры. Используйте `/blackjack <ставка>`.")
+        return
 
-    await update.message.reply_text(f"🃏 Ваша комбинация: {player_hand}\n🤖 Комбинация бота: {bot_hand}")
+    game = active_blackjack_games[user_id]
 
-    if hands.index(player_hand) > hands.index(bot_hand):
-        winnings = bet * 2
+
+    new_card = deal_card()
+    game["player_cards"].append(new_card)
+    game["player_score"] = calculate_score(game["player_cards"])
+
+
+    if game["player_score"] > 21:
+        del active_blackjack_games[user_id]
+        await update.message.reply_text(
+            f"💀 Вы взяли {new_card}. Теперь у вас {game['player_score']} очков.\n"
+            f"Вы проиграли {game['bet']}$!"
+        )
+        return
+
+    await update.message.reply_text(
+        f"🃏 Вы взяли {new_card}. Теперь у вас: {', '.join(game['player_cards'])} ({game['player_score']} очков).\n"
+        "✋ Напишите `/hit`, чтобы взять ещё, или `/stand`, чтобы закончить."
+    )
+
+
+async def stand(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
+    if user_id not in active_blackjack_games:
+        await update.message.reply_text("❌ У вас нет активной игры. Используйте `/blackjack <ставка>`.")
+        return
+
+    game = active_blackjack_games[user_id]
+
+
+    while game["dealer_score"] < 17:
+        new_card = deal_card()
+        game["dealer_cards"].append(new_card)
+        game["dealer_score"] = calculate_score(game["dealer_cards"])
+
+
+    if game["dealer_score"] > 21 or game["player_score"] > game["dealer_score"]:
+        winnings = game["bet"] * 2
         user_balances[user_id] += winnings
-        await update.message.reply_text(f"🎉 Вы выиграли! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
-    elif hands.index(player_hand) < hands.index(bot_hand):
-        await update.message.reply_text(f"😢 Вы проиграли! -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
+        result = f"🎉 Вы выиграли! Вы получили {winnings}$."
+    elif game["player_score"] == game["dealer_score"]:
+        user_balances[user_id] += game["bet"]
+        result = "😐 Ничья. Ваша ставка возвращена."
     else:
-        user_balances[user_id] += bet
-        await update.message.reply_text(f"🤝 Ничья! Ставка возвращена.\n💰 Баланс: {user_balances[user_id]}$")
+        result = f"💀 Дилер победил. Вы проиграли {game['bet']}$."
 
+    del active_blackjack_games[user_id]
+
+    await update.message.reply_text(
+        f"🃏 Ваши карты: {', '.join(game['player_cards'])} ({game['player_score']} очков)\n"
+        f"🤵 Карты дилера: {', '.join(game['dealer_cards'])} ({game['dealer_score']} очков)\n\n"
+        f"{result}"
+    )
+
+
+CARD_RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+DECK = [rank for rank in CARD_RANKS] * 4  # 4 масти
+
+
+active_poker_games = {}
+
+
+def deal_cards(num):
+    return random.sample(DECK, num)
+
+
+async def poker(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
+    if user_id not in user_balances:
+        user_balances[user_id] = START_BALANCE
+
+    if len(context.args) == 0:
+        await update.message.reply_text("🎲 Используйте: `/poker <ставка>`")
+        return
+
+    try:
+        bet = int(context.args[0])
+        if bet <= 0:
+            await update.message.reply_text("❌ Ставка должна быть больше 0!")
+            return
+        if bet > user_balances[user_id]:
+            await update.message.reply_text("❌ У вас недостаточно средств!")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Введите корректную сумму!")
+        return
+
+
+    player_hand = deal_cards(2)
+    dealer_hand = deal_cards(2)
+    community_cards = deal_cards(5)
+
+    active_poker_games[user_id] = {
+        "bet": bet,
+        "player_hand": player_hand,
+        "dealer_hand": dealer_hand,
+        "community_cards": community_cards,
+    }
+
+    user_balances[user_id] -= bet
+
+    await update.message.reply_text(
+        f"🃏 Ваши карты: {', '.join(player_hand)}\n"
+        f"💰 Ваша ставка: {bet}$\n\n"
+        "✋ Напишите `/showdown`, чтобы открыть карты."
+    )
+
+
+async def showdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+
+    if user_id not in active_poker_games:
+        await update.message.reply_text("❌ У вас нет активной игры. Используйте `/poker <ставка>`.")
+        return
+
+    game = active_poker_games[user_id]
+
+
+    player_combination = game["player_hand"] + game["community_cards"]
+    dealer_combination = game["dealer_hand"] + game["community_cards"]
+
+
+    player_score = hand_strength(player_combination)
+    dealer_score = hand_strength(dealer_combination)
+
+    if player_score > dealer_score:
+        winnings = game["bet"] * 2
+        user_balances[user_id] += winnings
+        result = f"🎉 Вы выиграли! Вы получили {winnings}$."
+    elif player_score == dealer_score:
+        user_balances[user_id] += game["bet"]
+        result = "😐 Ничья. Ваша ставка возвращена."
+    else:
+        result = f"💀 Дилер победил. Вы проиграли {game['bet']}$."
+
+    del active_poker_games[user_id]
+
+    await update.message.reply_text(
+        f"🃏 Ваши карты: {', '.join(game['player_hand'])}\n"
+        f"🤵 Карты дилера: {', '.join(game['dealer_hand'])}\n"
+        f"🃎 Общие карты: {', '.join(game['community_cards'])}\n\n"
+        f"{result}"
+    )
+
+def hand_strength(cards):
+    ranks = [CARD_RANKS.index(card) for card in cards]
+    return max(ranks)
 
 async def dice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
@@ -659,7 +842,13 @@ def main():
     app.add_handler(CommandHandler("accept", accept))
     app.add_handler(CommandHandler("crash", crash))
     app.add_handler(CommandHandler("cashout", cashout))
-    app.add_handler(CommandHandler("rob", rob))
+    app.add_handler(CommandHandler("rob", rob)),
+    app.add_handler(CommandHandler("blackjack", blackjack))
+    app.add_handler(CommandHandler("hit", hit))
+    app.add_handler(CommandHandler("stand", stand))
+    app.add_handler(CommandHandler("poker", poker))
+    app.add_handler(CommandHandler("showdown", showdown))
+    app.add_handler(CommandHandler("balance", balance))
 
     app.add_handler(CallbackQueryHandler(request_bet, pattern="^(roulette|blackjack|dice|poker)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_bet))
