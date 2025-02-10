@@ -360,7 +360,7 @@ async def bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_balances[user_id] = START_BALANCE
 
     if user_id not in user_stats:
-        user_stats[user_id] = {"wins": 0, "losses": 0}  # ✅ Добавляем игрока в stats
+        user_stats[user_id] = {"wins": 0, "losses": 0}
 
     if amount > user_balances[user_id]:
         await update.message.reply_text("❌ У вас недостаточно средств!")
@@ -452,18 +452,30 @@ async def set_bet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def roulette(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     bet = user_bets.get(user_id, 100)
+
+    if not context.args:
+        await update.message.reply_text("Введите число от 0 до 36 после команды. Пример: /roulette 17")
+        return
+
+    try:
+        user_number = int(context.args[0])
+        if user_number < 0 or user_number > 36:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("Некорректное число! Введите число от 0 до 36.")
+        return
+
     winning_number = random.randint(0, 36)
-    user_number = random.randint(0, 36)
 
     if winning_number == user_number:
         winnings = bet * 5
-        user_balances[user_id] += winnings
+        user_balances[user_id] = user_balances.get(user_id, 1000) + winnings
         await update.message.reply_text(
             f"🎉 Выпало {winning_number}, вы угадали! +{winnings}$\n💰 Баланс: {user_balances[user_id]}$")
     else:
+        user_balances[user_id] = user_balances.get(user_id, 1000) - bet
         await update.message.reply_text(
             f"😢 Выпало {winning_number}, вы поставили {user_number}. -{bet}$\n💰 Баланс: {user_balances[user_id]}$")
-
 
 CARD_VALUES = {
     "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10,
@@ -526,7 +538,7 @@ async def blackjack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "active": True
     }
 
-    user_balances[user_id] -= bet  # Вычитаем ставку
+    user_balances[user_id] -= bet
     await update.message.reply_text(
         f"🃏 Вы получили: {', '.join(player_cards)} ({player_score} очков)\n"
         f"🤵 Дилер показывает: {dealer_cards[0]}, ?\n\n"
@@ -598,7 +610,7 @@ async def stand(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 CARD_RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
-DECK = [rank for rank in CARD_RANKS] * 4  # 4 масти
+DECK = [rank for rank in CARD_RANKS] * 4
 
 
 active_poker_games = {}
